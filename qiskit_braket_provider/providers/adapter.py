@@ -3,7 +3,7 @@
 import warnings
 from collections.abc import Callable, Iterable
 from math import inf, pi
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import braket.circuits.gates as braket_gates
 import qiskit.circuit.library as qiskit_gates
@@ -32,6 +32,9 @@ from qiskit.transpiler import Target
 from qiskit_ionq import ionq_gates
 
 from qiskit_braket_provider.exception import QiskitBraketException
+
+if TYPE_CHECKING:
+    from qiskit_braket_provider.providers import BraketAwsBackend
 
 _GPHASE_GATE_NAME = "global_phase"
 
@@ -405,18 +408,23 @@ def _convert_aspen_qubit_indices(connectivity_graph: dict) -> dict:
 
 def to_braket(
     circuit: QuantumCircuit,
+    backend: Optional["BraketAwsBackend"] = None,
     basis_gates: Optional[Iterable[str]] = None,
     verbatim: bool = False,
+    native: bool = False,
 ) -> Circuit:
     """Return a Braket quantum circuit from a Qiskit quantum circuit.
 
     Args:
         circuit (QuantumCircuit): Qiskit quantum circuit
+        backend (Optional[BraketAwsBackend]): The backend to transpile to. Default: `None`.
         basis_gates (Optional[Iterable[str]]): The gateset to transpile to.
             If `None`, the transpiler will use all gates defined in the Braket SDK.
             Default: `None`.
         verbatim (bool): Whether to translate the circuit without any modification, in other
             words without transpiling it. Default: False.
+        native (bool): Whether to use the native gateset of the backend. If backend is not
+            provided, this flag is ignored. Default: False.
 
     Returns:
         Circuit: Braket circuit
@@ -430,7 +438,21 @@ def to_braket(
     if not verbatim and not {gate.name for gate, _, _ in circuit.data}.issubset(
         basis_gates
     ):
-        circuit = transpile(circuit, basis_gates=basis_gates, optimization_level=0)
+        if backend is not None and native:
+            circuit = transpile(
+                circuit,
+                backend=backend,
+                basis_gates=list(
+                    map(
+                        str.lower, backend._aws_device.properties.paradigm.nativeGateSet
+                    )
+                ),
+                optimization_level=0,
+            )
+        else:
+            circuit = transpile(
+                circuit, backend=backend, basis_gates=basis_gates, optimization_level=0
+            )
 
     # Verify that ParameterVector would not collide with scalar variables after renaming.
     _validate_name_conflicts(circuit.parameters)
